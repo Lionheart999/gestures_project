@@ -9,7 +9,7 @@ python gesture_singleframe.py train --index data_single/index_single.csv
 3) Live inference
 python gesture_singleframe.py infer --model model_mlp_single.pth --flip
 
-# For sequences
+# For sequences:
 
 1) Collect frames
 python collect_sequences.py
