@@ -26,6 +26,13 @@ mp_hands = mp.solutions.hands
 NUM_JOINTS = 21
 FEAT_DIM = 63  # 21 * (x,y,z)
 
+torch.manual_seed(67)
+np.random.seed(67)
+
+torch.cuda.manual_seed(67)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+
 # =========================
 # Landmark normalization (single hand)
 # =========================
@@ -196,8 +203,8 @@ def cmd_train(args):
 
     # 70/15/15 split as per report
     X, y = load_dataset(rows)
-    X_train, X_tmp, y_train, y_tmp = train_test_split(X, y, test_size=0.30, random_state=42, stratify=y)
-    X_val, X_test, y_val, y_test = train_test_split(X_tmp, y_tmp, test_size=0.50, random_state=42, stratify=y_tmp)
+    X_train, X_tmp, y_train, y_tmp = train_test_split(X, y, test_size=0.30, random_state=67, stratify=y)
+    X_val, X_test, y_val, y_test = train_test_split(X_tmp, y_tmp, test_size=0.50, random_state=67, stratify=y_tmp)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = MLP(in_dim=FEAT_DIM, n_classes=2, p_drop=0.3).to(device)
