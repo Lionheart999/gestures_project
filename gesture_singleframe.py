@@ -13,6 +13,9 @@ import torch.optim as optim
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, confusion_matrix, precision_recall_fscore_support
 
+import pandas as pd
+
+
 # =========================
 # Config
 # =========================
@@ -100,14 +103,21 @@ def load_rows(index_csv):
     return rows
 
 def load_dataset(rows):
-    X=[]; y=[]
-    for p,lab in rows:
+    X = []
+    y = []
+    for p, lab in rows:
+        if not os.path.exists(p):
+            print("WARNING: file missing, skipping:", p)
+            continue
         d = np.load(p)
-        X.append(d["x"].astype(np.float32))  # [63]
+        X.append(d["x"].astype(np.float32))
         y.append(int(d["y"]))
+    if len(X) == 0:
+        raise RuntimeError("No valid samples found!")
     X = np.stack(X, axis=0)
     y = np.array(y, dtype=np.int64)
-    return X,y
+    return X, y
+
 
 # =========================
 # Subcommand: collect
@@ -118,14 +128,11 @@ def cmd_collect(args):
       'h' -> help(1)
       'n' -> not_help(0)
       'q'/ESC -> quit
-    Saves one .npz per keypress, and logs to index_single.csv
+    Saves one .npz per keypress, and regenerates index_single.csv at the end.
     """
     outdir = args.outdir
     ensure_dir(outdir)
     index_csv = os.path.join(outdir, "index_single.csv")
-    if not os.path.exists(index_csv):
-        with open(index_csv, "w", newline="") as f:
-            w = csv.writer(f); w.writerow(["path","label"])
 
     cap = cv2.VideoCapture(0)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
@@ -135,7 +142,8 @@ def cmd_collect(args):
                            model_complexity=1, min_detection_confidence=0.5,
                            min_tracking_confidence=0.5)
 
-    print("Hotkeys: [h]=help (1), [n]=not_help (0), [q]/ESC=quit")
+    print("Hotkeys: [h]=help (1), [n]=not_help (0), [q]=quit")
+
     while True:
         ok, frame = cap.read()
         if not ok: break
@@ -145,7 +153,6 @@ def cmd_collect(args):
 
         feat63 = None
         if res.multi_hand_landmarks:
-            # take first (best) hand
             feat63 = landmarks_to_63(res.multi_hand_landmarks[0].landmark)
 
         # HUD
@@ -160,16 +167,29 @@ def cmd_collect(args):
         if k in [ord('h'), ord('n')] and feat63 is not None:
             lab = LABEL_KEYS[chr(k)]
             fpath = save_sample(outdir, feat63, lab)
-            with open(index_csv, "a", newline="") as f:
-                csv.writer(f).writerow([fpath, lab])
             print("saved:", fpath)
 
-    hands.close(); cap.release(); cv2.destroyAllWindows()
+    # Clean up
+    hands.close()
+    cap.release()
+    cv2.destroyAllWindows()
+
+    # Regenerate CSV at the end
+    npz_files = [f for f in os.listdir(outdir) if f.endswith(".npz")]
+    with open(index_csv, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["path","label"])
+        for npz in npz_files:
+            data = np.load(os.path.join(outdir, npz))
+            label = int(data["y"])
+            writer.writerow([os.path.join(outdir, npz), label])
+    print(f"Regenerated index CSV: {index_csv}, {len(npz_files)} samples")
 
 # =========================
 # Subcommand: train
 # =========================
 def cmd_train(args):
+
     rows = load_rows(args.index)
     if len(rows) < 20:
         print("WARNING: very few samples; consider collecting more.")
@@ -238,6 +258,22 @@ def cmd_train(args):
         "f1":        {"not_help": float(f1[0]),   "help": float(f1[1])},
     }
     print("Test metrics:", json.dumps(metrics, indent=2))
+
+    df_metrics = pd.DataFrame({
+        "Class": ["not_help", "help"],
+        "Precision": [metrics["precision"]["not_help"], metrics["precision"]["help"]],
+        "Recall":    [metrics["recall"]["not_help"], metrics["recall"]["help"]],
+        "F1-score":  [metrics["f1"]["not_help"], metrics["f1"]["help"]]
+    })
+
+    # Confusion matrix as DataFrame
+    cm = metrics["confusion_matrix"]
+    df_cm = pd.DataFrame(cm, index=["True Not Help", "True Help"], columns=["Pred Not Help", "Pred Help"])
+
+    # Save both sheets into an Excel file
+    with pd.ExcelWriter("performance_evaluation.xlsx") as writer:
+        df_metrics.to_excel(writer, sheet_name="Class Metrics", index=False)
+        df_cm.to_excel(writer, sheet_name="Confusion Matrix")
 
 # =========================
 # Subcommand: infer (live)
