@@ -273,14 +273,28 @@ def cmd_train(args):
         "F1-score":  [metrics["f1"]["not_help"], metrics["f1"]["help"]]
     })
 
-    # Confusion matrix as DataFrame
     cm = metrics["confusion_matrix"]
-    df_cm = pd.DataFrame(cm, index=["True Not Help", "True Help"], columns=["Pred Not Help", "Pred Help"])
+    df_cm = pd.DataFrame(cm,
+                        index=["True Not Help", "True Help"],
+                        columns=["Pred Not Help", "Pred Help"])
 
-    # Save both sheets into an Excel file
+    df_metrics = pd.DataFrame({
+        "Class": ["not_help", "help"],
+        "Precision": [metrics["precision"]["not_help"], metrics["precision"]["help"]],
+        "Recall":    [metrics["recall"]["not_help"],  metrics["recall"]["help"]],
+        "F1-score":  [metrics["f1"]["not_help"],      metrics["f1"]["help"]]
+    })
+
+    df_summary = pd.DataFrame({
+        "Metric": ["Accuracy"],
+        "Value": [metrics["accuracy"]]
+    })
+
     with pd.ExcelWriter("performance_evaluation.xlsx") as writer:
         df_metrics.to_excel(writer, sheet_name="Class Metrics", index=False)
-        df_cm.to_excel(writer, sheet_name="Confusion Matrix")
+        df_cm.to_excel(writer, sheet_name="Confusion Matrix", index=True)
+        df_summary.to_excel(writer, sheet_name="Summary", index=False)
+
 
 # =========================
 # Subcommand: infer (live)
