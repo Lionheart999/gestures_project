@@ -22,7 +22,7 @@ python train_tcn.py
 3) Live inference
 python infer_live.py
 
-New sequence method
+# New sequence method
 
 # collect stays the same
 python gesture_temporal.py collect --outdir data --seq_len 96 --flip
