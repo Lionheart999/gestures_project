@@ -40,4 +40,4 @@ python gesture_temporal.py train --index data/index.csv --model_type gru --seq_l
 python gesture_temporal.py train --index data/index.csv --model_type transformer --seq_len 96
 
 # infer with whatever you trained
-python gesture_temporal.py infer --model model_tcn.pth --model_type tcn --seq_len 96 --flip
+python gesture_temporal.py infer --model model_tcn_seq96.pth --model_type tcn --seq_len 96 --flip

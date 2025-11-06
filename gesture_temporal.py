@@ -59,12 +59,12 @@ GESTURE_NAMES = [
     "open palm",    # 1
     "fist",         # 2
     "thumbs up",    # 3
-    "pointing",     # 4
-    "peace / V",    # 5
-    "OK sign",      # 6
-    "wave",         # 7
-    "help signal",  # 8
-    "grab / clench" # 9
+    "peace",        # 4
+    "OK",           # 5
+    "wave",         # 6
+    "help signal",  # 7
+    "swipe left",   # 8
+    "swipe right"   # 9
 ]
 
 PAD_ZERO = np.zeros((NUM_JOINTS, 3), dtype=np.float32)
