@@ -11,6 +11,8 @@ python gesture_singleframe.py infer --model model_mlp_single.pth --flip
 
 # For sequences:
 
+Old sequence method
+*
 1) Collect frames
 python collect_sequences.py
 
@@ -19,6 +21,7 @@ python train_tcn.py
 
 3) Live inference
 python infer_live.py
+*
 
 # collect stays the same
 python gesture_temporal.py collect --outdir data --seq_len 96 --flip
