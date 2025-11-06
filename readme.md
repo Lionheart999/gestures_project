@@ -19,3 +19,21 @@ python train_tcn.py
 
 3) Live inference
 python infer_live.py
+
+# collect stays the same
+python gesture_temporal.py collect --outdir data --seq_len 96 --flip
+
+# train TCN (default)
+python gesture_temporal.py train --index data/index.csv --model_type tcn
+
+# train LSTM
+python gesture_temporal.py train --index data/index.csv --model_type lstm
+
+# train GRU
+python gesture_temporal.py train --index data/index.csv --model_type gru
+
+# train Transformer
+python gesture_temporal.py train --index data/index.csv --model_type transformer
+
+# infer with whatever you trained
+python gesture_temporal.py infer --model model_tcn.pth --model_type tcn --seq_len 96 --flip
