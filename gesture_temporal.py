@@ -54,6 +54,19 @@ LABEL_MAP = {
     "9": 9,  # swipe right
 }
 
+GESTURE_NAMES = [
+    "none",         # 0
+    "open palm",    # 1
+    "fist",         # 2
+    "thumbs up",    # 3
+    "pointing",     # 4
+    "peace / V",    # 5
+    "OK sign",      # 6
+    "wave",         # 7
+    "help signal",  # 8
+    "grab / clench" # 9
+]
+
 PAD_ZERO = np.zeros((NUM_JOINTS, 3), dtype=np.float32)
 
 import random
@@ -326,6 +339,8 @@ def cmd_collect(args):
 # train
 # =========================
 def cmd_train(args):
+    args.out = f"model_{args.model_type}_seq{args.seq_len}.pth"
+    
     rows = load_index(args.index)
     if not rows:
         raise RuntimeError("No data rows found in index.csv")
@@ -347,49 +362,77 @@ def cmd_train(args):
     opt = optim.AdamW(model.parameters(), lr=args.lr)
     crit = nn.CrossEntropyLoss()
 
-    best_f1 = 0.0
-    for ep in range(1, args.epochs + 1):
-        model.train()
-        tot = 0
-        correct = 0
-        for X, y in tr_dl:
-            X, y = X.to(device), y.to(device)
-            logits = model(X)
-            loss = crit(logits, y)
-            opt.zero_grad()
-            loss.backward()
-            opt.step()
-            correct += (logits.argmax(1) == y).sum().item()
-            tot += y.size(0)
-        tr_acc = correct / tot
+    # ensure output directory exists (if user gave something like "checkpoints/model_tcn.pth")
+    out_dir = os.path.dirname(args.out)
+    if out_dir and not os.path.exists(out_dir):
+        os.makedirs(out_dir, exist_ok=True)
 
-        # validate
-        model.eval()
-        tp = [0] * NUM_CLASSES
-        fp = [0] * NUM_CLASSES
-        fn = [0] * NUM_CLASSES
-        with torch.no_grad():
-            for X, y in va_dl:
+    best_f1 = -1.0   # < 0 so first epoch always saves
+    best_epoch = None
+
+    metrics_path = args.out + ".metrics.csv"
+    with open(metrics_path, "w") as mf:
+        mf.write("epoch,model_type,train_acc,val_macro_f1,saved\n")
+
+        for ep in range(1, args.epochs + 1):
+            # ---------- train ----------
+            model.train()
+            tot = 0
+            correct = 0
+            for X, y in tr_dl:
                 X, y = X.to(device), y.to(device)
-                pred = model(X).argmax(1)
-                for c in range(NUM_CLASSES):
-                    tp[c] += ((pred == c) & (y == c)).sum().item()
-                    fp[c] += ((pred == c) & (y != c)).sum().item()
-                    fn[c] += ((pred != c) & (y == c)).sum().item()
+                logits = model(X)
+                loss = crit(logits, y)
+                opt.zero_grad()
+                loss.backward()
+                opt.step()
+                correct += (logits.argmax(1) == y).sum().item()
+                tot += y.size(0)
+            tr_acc = correct / tot if tot > 0 else 0.0
 
-        f1s = []
-        for c in range(NUM_CLASSES):
-            precision = tp[c] / (tp[c] + fp[c] + 1e-9)
-            recall = tp[c] / (tp[c] + fn[c] + 1e-9)
-            f1s.append(2 * precision * recall / (precision + recall + 1e-9))
-        macro_f1 = float(np.mean(f1s))
+            # ---------- validate ----------
+            model.eval()
+            tp = [0] * NUM_CLASSES
+            fp = [0] * NUM_CLASSES
+            fn = [0] * NUM_CLASSES
+            with torch.no_grad():
+                for X, y in va_dl:
+                    X, y = X.to(device), y.to(device)
+                    pred = model(X).argmax(1)
+                    for c in range(NUM_CLASSES):
+                        tp[c] += ((pred == c) & (y == c)).sum().item()
+                        fp[c] += ((pred == c) & (y != c)).sum().item()
+                        fn[c] += ((pred != c) & (y == c)).sum().item()
 
-        print(f"Epoch {ep:02d} | {args.model_type} | train_acc {tr_acc:.3f} | val_macroF1 {macro_f1:.3f}")
+            f1s = []
+            for c in range(NUM_CLASSES):
+                precision = tp[c] / (tp[c] + fp[c] + 1e-9)
+                recall = tp[c] / (tp[c] + fn[c] + 1e-9)
+                f1s.append(2 * precision * recall / (precision + recall + 1e-9))
+            macro_f1 = float(np.mean(f1s))
 
-        if macro_f1 > best_f1:
-            best_f1 = macro_f1
-            torch.save(model.state_dict(), args.out)
-            print("  saved:", args.out)
+            saved_flag = 0
+            if macro_f1 > best_f1:
+                best_f1 = macro_f1
+                best_epoch = ep
+                torch.save(model.state_dict(), args.out)
+                saved_flag = 1
+                print(f"  [checkpoint] saved best model to: {args.out} (epoch {ep}, macroF1={macro_f1:.3f})")
+
+            print(f"Epoch {ep:02d} | {args.model_type} | "
+                  f"train_acc {tr_acc:.3f} | val_macroF1 {macro_f1:.3f}")
+
+            mf.write(f"{ep},{args.model_type},{tr_acc:.6f},{macro_f1:.6f},{saved_flag}\n")
+            mf.flush()
+
+    # also save final-epoch weights separately (even if they weren't best)
+    final_out = args.out + ".last.pth"
+    torch.save(model.state_dict(), final_out)
+    print(f"Training complete. Best epoch: {best_epoch} (macroF1={best_f1:.3f})")
+    print("Best model:", args.out)
+    print("Final epoch model:", final_out)
+    print("Metrics written to:", metrics_path)
+
 
 
 # =========================
@@ -444,12 +487,15 @@ def cmd_infer(args):
             with torch.no_grad():
                 prob = torch.softmax(model(X), dim=1)[0].cpu().numpy()
 
+            # show per-class probabilities
             y0 = 20
             for i, c in enumerate(CLASSES):
+                name = GESTURE_NAMES[i]
+                text = f"{c}: {name[:8]} {prob[i]:.2f}"
                 col = (0, 255, 0) if c != "0" else (200, 200, 200)
-                cv2.putText(frame, f"{c}: {prob[i]:.2f}", (10, y0),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, col, 2)
-                y0 += 24
+                cv2.putText(frame, text, (10, y0),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, col, 1)
+                y0 += 20
 
             c_idx = int(prob.argmax())
             c_name = CLASSES[c_idx]
@@ -467,13 +513,17 @@ def cmd_infer(args):
             if over_cnt >= args.hold:
                 last_fire = time.time()
                 over_cnt = 0
-                cv2.putText(frame, f"TRIGGER: {c_name}", (10, H - 20),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
+                gesture_label = GESTURE_NAMES[c_idx]
+                last_label_text = f"{c_idx}: {gesture_label}"
+                print(f"[DETECTED] {last_label_text}  (prob={prob[c_idx]:.3f})")
 
-        if time.time() - last_fire < 1.0:
-            cv2.rectangle(frame, (0, 0), (W, 50), (0, 0, 255), -1)
-            cv2.putText(frame, "GESTURE DETECTED", (20, 35),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+        # draw detection banner for ~1 second after trigger
+        if time.time() - last_fire < 1.0 and last_label_text:
+            overlay = frame.copy()
+            cv2.rectangle(overlay, (0, 0), (W, 60), (0, 0, 255), -1)
+            frame = cv2.addWeighted(overlay, 0.6, frame, 0.4, 0)
+            cv2.putText(frame, f"DETECTED: {last_label_text}", (20, 40),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
 
         cv2.imshow("infer_temporal", frame)
         if cv2.waitKey(1) & 0xFF in [27, ord('q')]:
@@ -507,7 +557,7 @@ def main():
     t.add_argument("--epochs", type=int, default=15)
     t.add_argument("--batch", type=int, default=64)
     t.add_argument("--lr", type=float, default=1e-3)
-    t.add_argument("--out", default="model_tcn.pth")
+    t.add_argument("--out", default=None)
     t.add_argument("--model_type",
                    default="tcn",
                    choices=["tcn", "lstm", "gru", "transformer"])

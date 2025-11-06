@@ -1,0 +1,16 @@
+epoch,model_type,train_acc,val_macro_f1,saved
+1,transformer,0.348790,0.651276,1
+2,transformer,0.709677,0.782919,1
+3,transformer,0.818548,0.836188,1
+4,transformer,0.885081,0.911047,1
+5,transformer,0.903226,0.956282,1
+6,transformer,0.943548,0.948802,0
+7,transformer,0.965726,0.963323,1
+8,transformer,0.969758,0.947632,0
+9,transformer,0.973790,0.939259,0
+10,transformer,0.979839,0.930330,0
+11,transformer,0.987903,0.978266,1
+12,transformer,0.993952,0.939218,0
+13,transformer,0.989919,0.985400,1
+14,transformer,0.987903,0.970714,0
+15,transformer,0.977823,0.937778,0

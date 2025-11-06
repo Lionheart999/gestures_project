@@ -28,16 +28,16 @@ python infer_live.py
 python gesture_temporal.py collect --outdir data --seq_len 96 --flip
 
 # train TCN (default)
-python gesture_temporal.py train --index data/index.csv --model_type tcn
+python gesture_temporal.py train --index data/index.csv --model_type tcn --seq_len 96
 
 # train LSTM
-python gesture_temporal.py train --index data/index.csv --model_type lstm
+python gesture_temporal.py train --index data/index.csv --model_type lstm --seq_len 96
 
 # train GRU
-python gesture_temporal.py train --index data/index.csv --model_type gru
+python gesture_temporal.py train --index data/index.csv --model_type gru --seq_len 96
 
 # train Transformer
-python gesture_temporal.py train --index data/index.csv --model_type transformer
+python gesture_temporal.py train --index data/index.csv --model_type transformer --seq_len 96
 
 # infer with whatever you trained
 python gesture_temporal.py infer --model model_tcn.pth --model_type tcn --seq_len 96 --flip
