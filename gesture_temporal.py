@@ -33,6 +33,8 @@ from sklearn.model_selection import train_test_split
 # Global config
 # =========================
 mp_hands = mp.solutions.hands
+mp_drawing = mp.solutions.drawing_utils
+mp_drawing_styles = mp.solutions.drawing_styles
 
 NUM_JOINTS = 21
 FEAT_DIM = 128
@@ -280,6 +282,14 @@ def cmd_collect(args):
         if res.multi_hand_landmarks:
             for lm, hd in zip(res.multi_hand_landmarks, res.multi_handedness):
                 pairs.append((lm, hd))
+                # draw skeletal landmarks on the BGR frame
+                mp_drawing.draw_landmarks(
+                    frame,
+                    lm,
+                    mp_hands.HAND_CONNECTIONS,
+                    mp_drawing_styles.get_default_hand_landmarks_style(),
+                    mp_drawing_styles.get_default_hand_connections_style(),
+                )
 
         feat = handpack(pairs)
         buf.append(feat)
