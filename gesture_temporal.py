@@ -9,12 +9,12 @@
 # 1 = open palm
 # 2 = fist
 # 3 = thumbs up
-# 4 = pointing
-# 5 = victory / peace
-# 6 = ok sign
-# 7 = wave
-# 8 = help signal
-# 9 = swipe
+# 4 = victory / peace
+# 5 = ok sign
+# 6 = wave
+# 7 = help signal
+# 8 = swipe left
+# 9 = swipe right
 
 import os, time, uuid, argparse, csv
 import numpy as np
@@ -46,12 +46,12 @@ LABEL_MAP = {
     "1": 1,  # open palm
     "2": 2,  # fist
     "3": 3,  # thumbs up
-    "4": 4,  # pointing
-    "5": 5,  # peace
-    "6": 6,  # ok
-    "7": 7,  # wave
-    "8": 8,  # help
-    "9": 9,  # circle
+    "4": 4,  # victory / peace
+    "5": 5,  # ok
+    "6": 6,  # wave
+    "7": 7,  # help
+    "8": 8,  # swipe left
+    "9": 9,  # swipe right
 }
 
 PAD_ZERO = np.zeros((NUM_JOINTS, 3), dtype=np.float32)
@@ -252,7 +252,7 @@ def cmd_collect(args):
         with open(index_path, "w") as f:
             f.write("path,label\n")
 
-    print("Collecting... keys: 0=none, 1=palm, 2=fist, 3=thumbs up, 4=pointing, 5=peace, 6=ok, 7=wave, 8=help, 9=circle, q=quit")
+    print("Collecting... keys: 0=none, 1=palm, 2=fist, 3=thumbs up, 4=peace, 5=ok, 6=wave, 7=help, 8=swipe left, 9=swipe right, q=quit")
 
     cap = cv2.VideoCapture(0)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
@@ -298,7 +298,7 @@ def cmd_collect(args):
 
         cv2.putText(frame, f"buffer: {len(buf)}/{args.seq_len}", (12, 28),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
-        cv2.putText(frame, "Collecting... keys: 0=none, 1=palm, 2=fist, 3=thumbs up, 4=pointing, 5=peace, 6=ok, 7=wave, 8=help, 9=circle, q=quit", (12, 58),
+        cv2.putText(frame, "Collecting... keys: 0=none, 1=palm, 2=fist, 3=thumbs up, 4=peace, 5=ok, 6=wave, 7=help, 8=swipe left, 9=swipe right, q=quit", (12, 58),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
         cv2.imshow("collect_temporal", frame)
 
