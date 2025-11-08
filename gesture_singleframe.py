@@ -201,22 +201,29 @@ def cmd_train(args):
     if len(rows) < 20:
         print("WARNING: very few samples; consider collecting more.")
 
-    # 70/15/15 split as per report
+    # 70/15/15 split
     X, y = load_dataset(rows)
-    X_train, X_tmp, y_train, y_tmp = train_test_split(X, y, test_size=0.30, random_state=67, stratify=y)
-    X_val, X_test, y_val, y_test = train_test_split(X_tmp, y_tmp, test_size=0.50, random_state=67, stratify=y_tmp)
+    X_train, X_tmp, y_train, y_tmp = train_test_split(
+        X, y, test_size=0.30, random_state=67, stratify=y)
+    X_val, X_test, y_val, y_test = train_test_split(
+        X_tmp, y_tmp, test_size=0.50, random_state=67, stratify=y_tmp)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = MLP(in_dim=FEAT_DIM, n_classes=2, p_drop=0.3).to(device)
-    opt = optim.Adam(model.parameters(), lr=args.lr)   # Adam optimizer
+    opt = optim.Adam(model.parameters(), lr=args.lr)
     crit = nn.CrossEntropyLoss()
 
-    # early stopping
-    best_val = 1e9; best_state=None; patience=args.patience; bad=0
+    best_val = 1e9
+    best_state = None
+    patience = args.patience
+    bad = 0
+
+    history = []  
 
     def run_epoch(Xn, yn, train=True, batch=256):
         model.train(mode=train)
-        losses=[]; n = Xn.shape[0]
+        losses = []
+        n = Xn.shape[0]
         idx = np.random.permutation(n) if train else np.arange(n)
         for i in range(0, n, batch):
             j = idx[i:i+batch]
@@ -225,38 +232,47 @@ def cmd_train(args):
             logits = model(xb)
             loss = crit(logits, yb)
             if train:
-                opt.zero_grad(); loss.backward(); opt.step()
+                opt.zero_grad()
+                loss.backward()
+                opt.step()
             losses.append(float(loss.item()))
         return float(np.mean(losses))
 
-    for ep in range(1, args.epochs+1):
+    for ep in range(1, args.epochs + 1):
         tr_loss = run_epoch(X_train, y_train, train=True, batch=args.batch)
         with torch.no_grad():
             model.eval()
             val_logits = model(torch.from_numpy(X_val).to(device))
             val_loss = float(crit(val_logits, torch.from_numpy(y_val).to(device)).item())
+
         print(f"Epoch {ep:02d} | train_loss {tr_loss:.4f} | val_loss {val_loss:.4f}")
+        history.append({"Epoch": ep, "Train Loss": tr_loss, "Val Loss": val_loss})
 
         if val_loss < best_val - 1e-4:
-            best_val = val_loss; best_state = model.state_dict(); bad = 0
+            best_val = val_loss
+            best_state = model.state_dict()
+            bad = 0
         else:
             bad += 1
             if bad >= patience:
                 print("Early stopping.")
                 break
 
-    if best_state is None: best_state = model.state_dict()
+    if best_state is None:
+        best_state = model.state_dict()
     torch.save(best_state, args.out)
     print("Saved model to", args.out)
 
-    # Final test metrics
     with torch.no_grad():
-        model.load_state_dict(best_state); model.eval()
+        model.load_state_dict(best_state)
+        model.eval()
         logits = model(torch.from_numpy(X_test).to(device))
         pred = logits.argmax(1).cpu().numpy()
+
     acc = accuracy_score(y_test, pred)
-    cm = confusion_matrix(y_test, pred, labels=[0,1])
-    prec, rec, f1, _ = precision_recall_fscore_support(y_test, pred, labels=[0,1], zero_division=0)
+    cm = confusion_matrix(y_test, pred, labels=[0, 1])
+    prec, rec, f1, _ = precision_recall_fscore_support(y_test, pred, labels=[0, 1], zero_division=0)
+
     metrics = {
         "accuracy": float(acc),
         "confusion_matrix": cm.tolist(),
@@ -269,31 +285,26 @@ def cmd_train(args):
     df_metrics = pd.DataFrame({
         "Class": ["not_help", "help"],
         "Precision": [metrics["precision"]["not_help"], metrics["precision"]["help"]],
-        "Recall":    [metrics["recall"]["not_help"], metrics["recall"]["help"]],
-        "F1-score":  [metrics["f1"]["not_help"], metrics["f1"]["help"]]
-    })
-
-    cm = metrics["confusion_matrix"]
-    df_cm = pd.DataFrame(cm,
-                        index=["True Not Help", "True Help"],
-                        columns=["Pred Not Help", "Pred Help"])
-
-    df_metrics = pd.DataFrame({
-        "Class": ["not_help", "help"],
-        "Precision": [metrics["precision"]["not_help"], metrics["precision"]["help"]],
         "Recall":    [metrics["recall"]["not_help"],  metrics["recall"]["help"]],
         "F1-score":  [metrics["f1"]["not_help"],      metrics["f1"]["help"]]
     })
+
+    df_cm = pd.DataFrame(cm,
+                         index=["True Not Help", "True Help"],
+                         columns=["Pred Not Help", "Pred Help"])
 
     df_summary = pd.DataFrame({
         "Metric": ["Accuracy"],
         "Value": [metrics["accuracy"]]
     })
 
+    df_history = pd.DataFrame(history)
+
     with pd.ExcelWriter("performance_evaluation.xlsx") as writer:
         df_metrics.to_excel(writer, sheet_name="Class Metrics", index=False)
         df_cm.to_excel(writer, sheet_name="Confusion Matrix", index=True)
         df_summary.to_excel(writer, sheet_name="Summary", index=False)
+        df_history.to_excel(writer, sheet_name="Loss per Epoch", index=False)
 
 
 # =========================

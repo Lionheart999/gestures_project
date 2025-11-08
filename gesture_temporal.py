@@ -28,6 +28,10 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix, accuracy_score
+import json
+from pathlib import Path
+
 
 # =========================
 # Global config
@@ -234,17 +238,29 @@ class SeqDS(Dataset):
 
     def __getitem__(self, i):
         path, lab = self.rows[i]
+
+        path = str(path).replace("\\", "/")
+
+        # ---- Missing-file handling (NEW) ----
+        if not os.path.exists(path):
+            print(f"WARNING: missing file, skipping: {path}")
+            X = np.zeros((self.seq_len, FEAT_DIM), dtype=np.float32)
+            y = 0
+            return torch.from_numpy(X), torch.tensor(y, dtype=torch.long)
+        # -------------------------------------
+
         d = np.load(path)
         X = d["seq"].astype(np.float32)
         y = int(d["label"])
+
         T = X.shape[0]
         if T < self.seq_len:
             pad = np.repeat(X[-1:], self.seq_len - T, axis=0)
             X = np.concatenate([X, pad], axis=0)
         elif T > self.seq_len:
             X = X[-self.seq_len:]
-        return torch.from_numpy(X), torch.tensor(y, dtype=torch.long)
 
+        return torch.from_numpy(X), torch.tensor(y, dtype=torch.long)
 
 def load_index(csv_path):
     rows = []
@@ -325,6 +341,7 @@ def cmd_collect(args):
             arr = np.stack(buf, axis=0)
             fname = f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}-L{lbl}.npz"
             path = os.path.join(args.outdir, fname)
+            path = str(path).replace("\\", "/")
             np.savez_compressed(path, seq=arr, label=np.int64(lbl))
             with open(index_path, "a") as f:
                 f.write(f"{path},{lbl}\n")
@@ -362,20 +379,19 @@ def cmd_train(args):
     opt = optim.AdamW(model.parameters(), lr=args.lr)
     crit = nn.CrossEntropyLoss()
 
-    # ensure output directory exists (if user gave something like "checkpoints/model_tcn.pth")
     out_dir = os.path.dirname(args.out)
     if out_dir and not os.path.exists(out_dir):
         os.makedirs(out_dir, exist_ok=True)
 
-    best_f1 = -1.0   # < 0 so first epoch always saves
+    best_f1 = -1.0
     best_epoch = None
+    best_metrics = None
 
     metrics_path = args.out + ".metrics.csv"
     with open(metrics_path, "w") as mf:
-        mf.write("epoch,model_type,train_acc,val_macro_f1,saved\n")
+        mf.write("epoch,model_type,train_acc,val_accuracy,val_macro_f1,val_precision,val_recall,saved\n")
 
         for ep in range(1, args.epochs + 1):
-            # ---------- train ----------
             model.train()
             tot = 0
             correct = 0
@@ -390,49 +406,121 @@ def cmd_train(args):
                 tot += y.size(0)
             tr_acc = correct / tot if tot > 0 else 0.0
 
-            # ---------- validate ----------
             model.eval()
+            all_preds = []
+            all_labels = []
             tp = [0] * NUM_CLASSES
             fp = [0] * NUM_CLASSES
             fn = [0] * NUM_CLASSES
+            
             with torch.no_grad():
                 for X, y in va_dl:
                     X, y = X.to(device), y.to(device)
                     pred = model(X).argmax(1)
+                    all_preds.extend(pred.cpu().numpy())
+                    all_labels.extend(y.cpu().numpy())
+                    
                     for c in range(NUM_CLASSES):
                         tp[c] += ((pred == c) & (y == c)).sum().item()
                         fp[c] += ((pred == c) & (y != c)).sum().item()
                         fn[c] += ((pred != c) & (y == c)).sum().item()
 
+            val_accuracy = accuracy_score(all_labels, all_preds)
+
+            precisions = []
+            recalls = []
             f1s = []
+            
             for c in range(NUM_CLASSES):
                 precision = tp[c] / (tp[c] + fp[c] + 1e-9)
                 recall = tp[c] / (tp[c] + fn[c] + 1e-9)
-                f1s.append(2 * precision * recall / (precision + recall + 1e-9))
+                f1 = 2 * precision * recall / (precision + recall + 1e-9)
+                precisions.append(precision)
+                recalls.append(recall)
+                f1s.append(f1)
+            
             macro_f1 = float(np.mean(f1s))
+            macro_precision = float(np.mean(precisions))
+            macro_recall = float(np.mean(recalls))
 
             saved_flag = 0
             if macro_f1 > best_f1:
                 best_f1 = macro_f1
                 best_epoch = ep
+                
+                best_metrics = {
+                    'all_preds': all_preds,
+                    'all_labels': all_labels,
+                    'val_accuracy': val_accuracy,
+                    'macro_f1': macro_f1,
+                    'macro_precision': macro_precision,
+                    'macro_recall': macro_recall,
+                    'per_class_precision': precisions,
+                    'per_class_recall': recalls,
+                    'per_class_f1': f1s,
+                }
+                
                 torch.save(model.state_dict(), args.out)
                 saved_flag = 1
                 print(f"  [checkpoint] saved best model to: {args.out} (epoch {ep}, macroF1={macro_f1:.3f})")
 
             print(f"Epoch {ep:02d} | {args.model_type} | "
-                  f"train_acc {tr_acc:.3f} | val_macroF1 {macro_f1:.3f}")
+                  f"train_acc {tr_acc:.3f} | val_acc {val_accuracy:.3f} | "
+                  f"val_macroF1 {macro_f1:.3f} | prec {macro_precision:.3f} | recall {macro_recall:.3f}")
 
-            mf.write(f"{ep},{args.model_type},{tr_acc:.6f},{macro_f1:.6f},{saved_flag}\n")
+            mf.write(f"{ep},{args.model_type},{tr_acc:.6f},{val_accuracy:.6f},{macro_f1:.6f},{macro_precision:.6f},{macro_recall:.6f},{saved_flag}\n")
             mf.flush()
 
-    # also save final-epoch weights separately (even if they weren't best)
     final_out = args.out + ".last.pth"
     torch.save(model.state_dict(), final_out)
-    print(f"Training complete. Best epoch: {best_epoch} (macroF1={best_f1:.3f})")
+    
+    if best_metrics:
+        cm = confusion_matrix(best_metrics['all_labels'], best_metrics['all_preds'])
+        
+        cm_path = args.out + ".confusion_matrix.json"
+        cm_dict = {
+            'confusion_matrix': cm.tolist(),
+            'gesture_names': GESTURE_NAMES,
+            'accuracy': best_metrics['val_accuracy'],
+            'macro_f1': best_metrics['macro_f1'],
+            'macro_precision': best_metrics['macro_precision'],
+            'macro_recall': best_metrics['macro_recall'],
+        }
+        with open(cm_path, "w") as f:
+            json.dump(cm_dict, f, indent=2)
+        
+        # Save detailed per-class metrics
+        detailed_metrics_path = args.out + ".detailed_metrics.csv"
+        with open(detailed_metrics_path, "w") as f:
+            f.write("gesture_class,gesture_name,precision,recall,f1_score\n")
+            for i in range(NUM_CLASSES):
+                f.write(f"{i},{GESTURE_NAMES[i]},{best_metrics['per_class_precision'][i]:.6f},"
+                       f"{best_metrics['per_class_recall'][i]:.6f},"
+                       f"{best_metrics['per_class_f1'][i]:.6f}\n")
+        
+        print("\n" + "="*70)
+        print("FINAL REPORT")
+        print("="*70)
+        print(f"Best Epoch: {best_epoch}")
+        print(f"Overall Accuracy: {best_metrics['val_accuracy']:.4f}")
+        print(f"Macro F1-Score: {best_metrics['macro_f1']:.4f}")
+        print(f"Macro Precision: {best_metrics['macro_precision']:.4f}")
+        print(f"Macro Recall: {best_metrics['macro_recall']:.4f}")
+        print("\nPer-Class Metrics:")
+        print(f"{'Class':<6} {'Gesture':<15} {'Precision':<12} {'Recall':<12} {'F1-Score':<12}")
+        print("-"*70)
+        for i in range(NUM_CLASSES):
+            print(f"{i:<6} {GESTURE_NAMES[i]:<15} {best_metrics['per_class_precision'][i]:<12.4f} "
+                  f"{best_metrics['per_class_recall'][i]:<12.4f} {best_metrics['per_class_f1'][i]:<12.4f}")
+        print("="*70)
+        
+        print(f"\nConfusion Matrix saved to: {cm_path}")
+        print(f"Detailed metrics saved to: {detailed_metrics_path}")
+    
+    print(f"\nTraining complete. Best epoch: {best_epoch} (macroF1={best_f1:.3f})")
     print("Best model:", args.out)
     print("Final epoch model:", final_out)
     print("Metrics written to:", metrics_path)
-
 
 
 # =========================
