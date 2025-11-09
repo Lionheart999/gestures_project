@@ -32,6 +32,10 @@ from sklearn.metrics import confusion_matrix, accuracy_score
 import json
 from pathlib import Path
 
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
+
 
 # =========================
 # Global config
@@ -351,10 +355,164 @@ def cmd_collect(args):
     cap.release()
     cv2.destroyAllWindows()
 
+def save_metrics_to_excel(metrics_path, model_type, best_epoch, train_metrics_history, val_metrics_history, 
+                          test_metrics, confusion_mat):
+    
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)  
+    
+    # Define styling
+    header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
+    center_align = Alignment(horizontal='center', vertical='center')
+    
+    ws_train = wb.create_sheet("Training Progress", 0)
+    ws_train['A1'] = f"Training Metrics - {model_type.upper()}"
+    ws_train['A1'].font = Font(bold=True, size=12)
+    
+    headers = ['Epoch', 'Train Accuracy', 'Val Accuracy', 'Val Macro F1', 'Val Precision', 'Val Recall', 'Best Model']
+    for col, header in enumerate(headers, 1):
+        cell = ws_train.cell(row=3, column=col, value=header)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.border = border
+        cell.alignment = center_align
+    
+    for row, (ep_num, train_dict, val_dict) in enumerate(zip(range(1, len(train_metrics_history)+1), 
+                                                               train_metrics_history, 
+                                                               val_metrics_history), 4):
+        is_best = "✓ BEST" if ep_num == best_epoch else ""
+        row_data = [
+            ep_num,
+            train_dict.get('accuracy', 0),
+            val_dict.get('accuracy', 0),
+            val_dict.get('macro_f1', 0),
+            val_dict.get('macro_precision', 0),
+            val_dict.get('macro_recall', 0),
+            is_best
+        ]
+        for col, value in enumerate(row_data, 1):
+            cell = ws_train.cell(row=row, column=col, value=value)
+            cell.border = border
+            cell.alignment = center_align
+            if isinstance(value, float):
+                cell.number_format = '0.0000'
+    
+    for col in range(1, len(headers) + 1):
+        ws_train.column_dimensions[get_column_letter(col)].width = 15
+    
+    ws_test_overall = wb.create_sheet("Test Set - Overall", 1)
+    ws_test_overall['A1'] = f"Test Set Overall Metrics - {model_type.upper()}"
+    ws_test_overall['A1'].font = Font(bold=True, size=12)
+    
+    test_overall_data = [
+        ['Metric', 'Value'],
+        ['Overall Accuracy', test_metrics['accuracy']],
+        ['Macro F1-Score', test_metrics['macro_f1']],
+        ['Macro Precision', test_metrics['macro_precision']],
+        ['Macro Recall', test_metrics['macro_recall']],
+        ['Best Training Epoch', best_epoch],
+    ]
+    
+    for row, row_data in enumerate(test_overall_data, 3):
+        for col, value in enumerate(row_data, 1):
+            cell = ws_test_overall.cell(row=row, column=col, value=value)
+            cell.border = border
+            if row == 3:  # Header row
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = center_align
+            elif col == 2 and isinstance(value, float):
+                cell.number_format = '0.0000'
+                cell.alignment = center_align
+    
+    ws_test_overall.column_dimensions['A'].width = 25
+    ws_test_overall.column_dimensions['B'].width = 20
+    
+    ws_test_per_class = wb.create_sheet("Test Set - Per-Class", 2)
+    ws_test_per_class['A1'] = f"Per-Class Test Metrics - {model_type.upper()}"
+    ws_test_per_class['A1'].font = Font(bold=True, size=12)
+    
+    per_class_headers = ['Class', 'Gesture Name', 'Precision', 'Recall', 'F1-Score']
+    for col, header in enumerate(per_class_headers, 1):
+        cell = ws_test_per_class.cell(row=3, column=col, value=header)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.border = border
+        cell.alignment = center_align
+    
+    gesture_names = [
+        "none", "open palm", "fist", "thumbs up", "peace", "OK", 
+        "wave", "help signal", "swipe left", "swipe right"
+    ]
+    
+    for class_idx in range(10):
+        row = class_idx + 4
+        row_data = [
+            class_idx,
+            gesture_names[class_idx],
+            test_metrics['per_class_precision'][class_idx],
+            test_metrics['per_class_recall'][class_idx],
+            test_metrics['per_class_f1'][class_idx],
+        ]
+        for col, value in enumerate(row_data, 1):
+            cell = ws_test_per_class.cell(row=row, column=col, value=value)
+            cell.border = border
+            cell.alignment = center_align
+            if isinstance(value, float):
+                cell.number_format = '0.0000'
+    
+    ws_test_per_class.column_dimensions['A'].width = 10
+    ws_test_per_class.column_dimensions['B'].width = 15
+    ws_test_per_class.column_dimensions['C'].width = 12
+    ws_test_per_class.column_dimensions['D'].width = 12
+    ws_test_per_class.column_dimensions['E'].width = 12
+    
+    ws_confusion = wb.create_sheet("Confusion Matrix", 3)
+    ws_confusion['A1'] = f"Confusion Matrix - {model_type.upper()}"
+    ws_confusion['A1'].font = Font(bold=True, size=12)
+    
+    for col, gesture in enumerate(gesture_names, 2):
+        cell = ws_confusion.cell(row=3, column=col, value=f"Pred: {gesture[:8]}")
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.border = border
+        cell.alignment = center_align
+    
+    for row_idx, gesture in enumerate(gesture_names, 4):
+        cell = ws_confusion.cell(row=row_idx, column=1, value=f"True: {gesture[:8]}")
+        cell.fill = PatternFill(start_color="D3D3D3", end_color="D3D3D3", fill_type="solid")
+        cell.font = Font(bold=True)
+        cell.border = border
+        cell.alignment = center_align
+        
+        for col_idx in range(10):
+            cell = ws_confusion.cell(row=row_idx, column=col_idx+2, value=int(confusion_mat[row_idx-4, col_idx]))
+            cell.border = border
+            cell.alignment = center_align
+            if row_idx - 4 == col_idx:
+                cell.fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+    
+    ws_confusion.column_dimensions['A'].width = 15
+    for col in range(2, 12):
+        ws_confusion.column_dimensions[get_column_letter(col)].width = 12
+    
+    excel_path = metrics_path.replace('.metrics.csv', '.xlsx')
+    wb.save(excel_path)
+    print(f"\n✓ Excel report saved to: {excel_path}")
+    return excel_path
 
 # =========================
 # train
 # =========================
+
+
 def cmd_train(args):
     args.out = f"model_{args.model_type}_seq{args.seq_len}.pth"
     
@@ -362,17 +520,31 @@ def cmd_train(args):
     if not rows:
         raise RuntimeError("No data rows found in index.csv")
 
-    X_train, X_val = train_test_split(
+    # First split: 80% train+val, 20% test
+    X_temp, X_test = train_test_split(
         rows,
         test_size=0.2,
         random_state=42,
         stratify=[r[1] for r in rows]
     )
+    
+    X_train, X_val = train_test_split(
+        X_temp,
+        test_size=0.25,
+        random_state=42,
+        stratify=[r[1] for r in X_temp]
+    )
+
+    print(f"\nData split: Train={len(X_train)} ({len(X_train)/len(rows)*100:.1f}%), "
+          f"Val={len(X_val)} ({len(X_val)/len(rows)*100:.1f}%), "
+          f"Test={len(X_test)} ({len(X_test)/len(rows)*100:.1f}%)\n")
 
     tr_ds = SeqDS(X_train, seq_len=args.seq_len)
     va_ds = SeqDS(X_val, seq_len=args.seq_len)
+    te_ds = SeqDS(X_test, seq_len=args.seq_len)
     tr_dl = DataLoader(tr_ds, batch_size=args.batch, shuffle=True, num_workers=0)
     va_dl = DataLoader(va_ds, batch_size=args.batch, shuffle=False, num_workers=0)
+    te_dl = DataLoader(te_ds, batch_size=args.batch, shuffle=False, num_workers=0)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = make_model(args.model_type, seq_len=args.seq_len).to(device)
@@ -385,7 +557,10 @@ def cmd_train(args):
 
     best_f1 = -1.0
     best_epoch = None
-    best_metrics = None
+    best_model_path = args.out + ".best.pth"
+    
+    train_metrics_history = []
+    val_metrics_history = []
 
     metrics_path = args.out + ".metrics.csv"
     with open(metrics_path, "w") as mf:
@@ -406,6 +581,7 @@ def cmd_train(args):
                 tot += y.size(0)
             tr_acc = correct / tot if tot > 0 else 0.0
 
+            # ---------- validate ----------
             model.eval()
             all_preds = []
             all_labels = []
@@ -447,22 +623,9 @@ def cmd_train(args):
             if macro_f1 > best_f1:
                 best_f1 = macro_f1
                 best_epoch = ep
-                
-                best_metrics = {
-                    'all_preds': all_preds,
-                    'all_labels': all_labels,
-                    'val_accuracy': val_accuracy,
-                    'macro_f1': macro_f1,
-                    'macro_precision': macro_precision,
-                    'macro_recall': macro_recall,
-                    'per_class_precision': precisions,
-                    'per_class_recall': recalls,
-                    'per_class_f1': f1s,
-                }
-                
-                torch.save(model.state_dict(), args.out)
+                torch.save(model.state_dict(), best_model_path)
                 saved_flag = 1
-                print(f"  [checkpoint] saved best model to: {args.out} (epoch {ep}, macroF1={macro_f1:.3f})")
+                print(f"  [checkpoint] saved best model (epoch {ep}, macroF1={macro_f1:.3f})")
 
             print(f"Epoch {ep:02d} | {args.model_type} | "
                   f"train_acc {tr_acc:.3f} | val_acc {val_accuracy:.3f} | "
@@ -470,59 +633,81 @@ def cmd_train(args):
 
             mf.write(f"{ep},{args.model_type},{tr_acc:.6f},{val_accuracy:.6f},{macro_f1:.6f},{macro_precision:.6f},{macro_recall:.6f},{saved_flag}\n")
             mf.flush()
+            
+            train_metrics_history.append({'accuracy': tr_acc})
+            val_metrics_history.append({
+                'accuracy': val_accuracy,
+                'macro_f1': macro_f1,
+                'macro_precision': macro_precision,
+                'macro_recall': macro_recall
+            })
 
-    final_out = args.out + ".last.pth"
+    final_out = args.out
     torch.save(model.state_dict(), final_out)
     
-    if best_metrics:
-        cm = confusion_matrix(best_metrics['all_labels'], best_metrics['all_preds'])
-        
-        cm_path = args.out + ".confusion_matrix.json"
-        cm_dict = {
-            'confusion_matrix': cm.tolist(),
-            'gesture_names': GESTURE_NAMES,
-            'accuracy': best_metrics['val_accuracy'],
-            'macro_f1': best_metrics['macro_f1'],
-            'macro_precision': best_metrics['macro_precision'],
-            'macro_recall': best_metrics['macro_recall'],
-        }
-        with open(cm_path, "w") as f:
-            json.dump(cm_dict, f, indent=2)
-        
-        # Save detailed per-class metrics
-        detailed_metrics_path = args.out + ".detailed_metrics.csv"
-        with open(detailed_metrics_path, "w") as f:
-            f.write("gesture_class,gesture_name,precision,recall,f1_score\n")
-            for i in range(NUM_CLASSES):
-                f.write(f"{i},{GESTURE_NAMES[i]},{best_metrics['per_class_precision'][i]:.6f},"
-                       f"{best_metrics['per_class_recall'][i]:.6f},"
-                       f"{best_metrics['per_class_f1'][i]:.6f}\n")
-        
-        print("\n" + "="*70)
-        print("FINAL REPORT")
-        print("="*70)
-        print(f"Best Epoch: {best_epoch}")
-        print(f"Overall Accuracy: {best_metrics['val_accuracy']:.4f}")
-        print(f"Macro F1-Score: {best_metrics['macro_f1']:.4f}")
-        print(f"Macro Precision: {best_metrics['macro_precision']:.4f}")
-        print(f"Macro Recall: {best_metrics['macro_recall']:.4f}")
-        print("\nPer-Class Metrics:")
-        print(f"{'Class':<6} {'Gesture':<15} {'Precision':<12} {'Recall':<12} {'F1-Score':<12}")
-        print("-"*70)
-        for i in range(NUM_CLASSES):
-            print(f"{i:<6} {GESTURE_NAMES[i]:<15} {best_metrics['per_class_precision'][i]:<12.4f} "
-                  f"{best_metrics['per_class_recall'][i]:<12.4f} {best_metrics['per_class_f1'][i]:<12.4f}")
-        print("="*70)
-        
-        print(f"\nConfusion Matrix saved to: {cm_path}")
-        print(f"Detailed metrics saved to: {detailed_metrics_path}")
+    model.load_state_dict(torch.load(best_model_path, map_location=device))
+    model.eval()
     
-    print(f"\nTraining complete. Best epoch: {best_epoch} (macroF1={best_f1:.3f})")
-    print("Best model:", args.out)
-    print("Final epoch model:", final_out)
-    print("Metrics written to:", metrics_path)
-
-
+    test_all_preds = []
+    test_all_labels = []
+    test_tp = [0] * NUM_CLASSES
+    test_fp = [0] * NUM_CLASSES
+    test_fn = [0] * NUM_CLASSES
+    
+    with torch.no_grad():
+        for X, y in te_dl:
+            X, y = X.to(device), y.to(device)
+            pred = model(X).argmax(1)
+            test_all_preds.extend(pred.cpu().numpy())
+            test_all_labels.extend(y.cpu().numpy())
+            
+            for c in range(NUM_CLASSES):
+                test_tp[c] += ((pred == c) & (y == c)).sum().item()
+                test_fp[c] += ((pred == c) & (y != c)).sum().item()
+                test_fn[c] += ((pred != c) & (y == c)).sum().item()
+    
+    test_accuracy = accuracy_score(test_all_labels, test_all_preds)
+    
+    test_precisions = []
+    test_recalls = []
+    test_f1s = []
+    
+    for c in range(NUM_CLASSES):
+        precision = test_tp[c] / (test_tp[c] + test_fp[c] + 1e-9)
+        recall = test_tp[c] / (test_tp[c] + test_fn[c] + 1e-9)
+        f1 = 2 * precision * recall / (precision + recall + 1e-9)
+        test_precisions.append(precision)
+        test_recalls.append(recall)
+        test_f1s.append(f1)
+    
+    test_macro_f1 = float(np.mean(test_f1s))
+    test_macro_precision = float(np.mean(test_precisions))
+    test_macro_recall = float(np.mean(test_recalls))
+    
+    cm_test = confusion_matrix(test_all_labels, test_all_preds)
+    
+    test_metrics = {
+        'accuracy': test_accuracy,
+        'macro_f1': test_macro_f1,
+        'macro_precision': test_macro_precision,
+        'macro_recall': test_macro_recall,
+        'per_class_precision': test_precisions,
+        'per_class_recall': test_recalls,
+        'per_class_f1': test_f1s,
+    }
+    
+    save_metrics_to_excel(metrics_path, args.model_type, best_epoch, train_metrics_history, 
+                          val_metrics_history, test_metrics, cm_test)
+    
+    print(f"\n" + "="*70)
+    print("TRAINING COMPLETE")
+    print("="*70)
+    print(f"Best model saved to: {best_model_path} (epoch {best_epoch})")
+    print(f"Final epoch model saved to: {final_out}")
+    print(f"Metrics log saved to: {metrics_path}")
+    print(f"Excel report saved to: {metrics_path.replace('.metrics.csv', '.xlsx')}")
+    print(f"\nUse this model for inference: python gesture_temporal.py infer --model {best_model_path} --model_type {args.model_type} --seq_len {args.seq_len}")
+    print("="*70)
 # =========================
 # infer
 # =========================
